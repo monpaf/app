@@ -1,0 +1,69 @@
+name: Build Android
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  android:
+    defaults:
+      run:
+        working-directory: packages/mobile
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        
+      - name: Setup Java version
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'zulu'
+          java-version: '17'
+          
+      - name: Export version from package.json
+        run: |
+          echo "PACKAGE_VERSION=$(grep '"version"' ../web/package.json | cut -d '"' -f 4 | cut -d "-" -f 1)" >> $GITHUB_ENV
+          
+      - name: Setup react-native kernel and increase watchers
+        run: echo fs.inotify.max_user_watches=524288 | sudo tee -a /etc/sysctl.conf && sudo sysctl -p
+        
+      - name: Install dependencies
+        run: yarn install --immutable
+        
+      - name: Build Mobile JS Bundle
+        run: yarn build:mobile
+        
+      - name: Decode Production Android keystore (GPG Armor)
+        run: |
+          echo "${{ secrets.ANDROID_KEYSTORE }}" > keystore.asc
+          gpg -d --passphrase "${{ secrets.KEYSTORE_PASSPHRASE }}" --batch keystore.asc > android/app/keystore.keystore
+          
+      - name: Stamp Version Number
+        working-directory: packages/mobile/android/app
+        run: |
+          sed -i -e "s/versionName appVersionName/versionName \"${{ env.PACKAGE_VERSION }}\"/" build.gradle
+          sed -i -e "s/versionCode appVersionCode/versionCode ${{ github.run_number }}/" build.gradle
+      
+      - name: Build Android Release (APK & AAB)
+        working-directory: packages/mobile/android
+        env: 
+          ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
+          ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PRIVATE_KEY_PASSWORD }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+        run: |
+          ./gradlew assembleProdRelease bundleProdRelease
+
+      - name: Release to GitHub
+        uses: softprops/action-gh-release@v1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          tag_name: "v${{ env.PACKAGE_VERSION }}-${{ github.run_number }}"
+          name: "Mobile Build ${{ github.run_number }}"
+          prerelease: true
+          files: |
+            packages/mobile/android/app/build/outputs/bundle/prodRelease/app-prod-release.aab
+            packages/mobile/android/app/build/outputs/apk/prod/release/app-prod-release.apk
+
