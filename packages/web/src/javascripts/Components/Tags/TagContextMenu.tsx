@@ -1,13 +1,14 @@
 import { observer } from 'mobx-react-lite'
-import { useCallback, useEffect, useMemo, useRef } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import Icon from '@/Components/Icon/Icon'
 import Menu from '@/Components/Menu/Menu'
 import MenuItem from '@/Components/Menu/MenuItem'
 import { usePremiumModal } from '@/Hooks/usePremiumModal'
-import { SNTag, VectorIconNameOrEmoji, DefaultTagIconName } from '@standardnotes/snjs'
+import { classNames, IconType, SNTag, VectorIconNameOrEmoji, DefaultTagIconName } from '@standardnotes/snjs'
 import { NavigationController } from '@/Controllers/Navigation/NavigationController'
 import HorizontalSeparator from '../Shared/HorizontalSeparator'
 import { formatDateForContextMenu } from '@/Utils/DateUtils'
+import { getTitleForLinkedTag } from '@/Utils/Items/Display/getTitleForLinkedTag'
 import { PremiumFeatureIconClass, PremiumFeatureIconName } from '../Icon/PremiumFeatureIcon'
 import Popover from '../Popover/Popover'
 import IconPicker from '../Icon/IconPicker'
@@ -61,6 +62,23 @@ const TagContextMenu = ({ navigationController, isEntitledToFolders, selectedTag
   const tagCreatedAt = useMemo(() => formatDateForContextMenu(selectedTag.created_at), [selectedTag.created_at])
 
   const titleInputRef = useRef<HTMLInputElement>(null)
+
+  const moveButtonRef = useRef<HTMLButtonElement>(null)
+  const [isMoveMenuOpen, setIsMoveMenuOpen] = useState(false)
+
+  const toggleMoveMenu = useCallback(() => {
+    setIsMoveMenuOpen((isOpen) => !isOpen)
+  }, [])
+
+  const handleMoveTag = useCallback(
+    (targetParentUuid?: string) => {
+      navigationController.assignParent(selectedTag.uuid, targetParentUuid).catch(console.error)
+      setIsMoveMenuOpen(false)
+      navigationController.setContextMenuOpen(false)
+    },
+    [navigationController, selectedTag]
+  )
+
   useEffect(() => {
     if (contextMenuOpen) {
       setTimeout(() => {
@@ -151,6 +169,79 @@ const TagContextMenu = ({ navigationController, isEntitledToFolders, selectedTag
             </div>
             {!isEntitledToFolders && <Icon type={PremiumFeatureIconName} className={PremiumFeatureIconClass} />}
           </MenuItem>
+          <div>
+            <MenuItem 
+              className={'justify-between py-1.5'} 
+              onClick={toggleMoveMenu} 
+              ref={moveButtonRef}
+            >
+              <div className="flex items-center">
+                <Icon type="hashtag" className="mr-2 text-neutral" />
+                Move to...
+              </div>
+              <Icon type="chevron-right" className="text-neutral" />
+            </MenuItem>
+            <Popover
+              title="Select Parent"
+              togglePopover={toggleMoveMenu}
+              anchorElement={moveButtonRef}
+              open={isMoveMenuOpen}
+              side="right"
+              align="start"
+              className="py-2"
+              overrideZIndex="z-modal"
+            >
+              <Menu a11yLabel="Parent tag selection menu" className="!px-0 max-h-64 overflow-y-auto">
+                <MenuItem onClick={() => handleMoveTag(undefined)}>
+                  <div className="font-bold">Top Level (Remove Parent)</div>
+                </MenuItem>
+                <HorizontalSeparator classes="my-1" />
+                {navigationController.tags
+                  .filter((tag) => {
+                    if (tag.uuid === selectedTag.uuid) return false
+                    
+                    if (tag.uuid === selectedTag.parentId) return false
+    
+                    let currentParentId = tag.parentId
+                    while (currentParentId) {
+                      if (currentParentId === selectedTag.uuid) return false
+                      
+                      const parentTag = navigationController.tags.find(t => t.uuid === currentParentId)
+                      currentParentId = parentTag?.parentId
+                    }
+                    
+                    return true
+                  })
+                  .map((tag) => {
+                    const tagTitlePrefix = getTitleForLinkedTag(tag, application)?.titlePrefix
+                    return (
+                      <MenuItem
+                        key={tag.uuid}
+                        onClick={() => handleMoveTag(tag.uuid)}
+                      >
+                        {tag.iconString && (
+                          <Icon
+                            type={tag.iconString as IconType}
+                            size={'custom'}
+                            className={'ml-0.5 mr-1.5 h-7 w-7 text-2xl text-neutral lg:h-6 lg:w-6 lg:text-lg'}
+                          />
+                        )}
+                        <div>
+                          {!!tagTitlePrefix && (
+                            <p className="overflow-hidden overflow-ellipsis whitespace-nowrap text-neutral">
+                              {tagTitlePrefix}
+                            </p>
+                          )}
+                          <p className="overflow-hidden overflow-ellipsis whitespace-nowrap">
+                            {tag.title}
+                          </p>
+                        </div>
+                      </MenuItem>
+                    )
+                  })}
+              </Menu>
+            </Popover>
+          </div>
           <MenuItem className={'py-1.5'} onClick={onClickDelete}>
             <Icon type="trash" className="mr-2 text-danger" />
             <span className="text-danger">Delete</span>
